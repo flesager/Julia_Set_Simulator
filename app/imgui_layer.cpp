@@ -256,7 +256,7 @@ void ImGuiLayer::build_ui(App& app) {
                            target_fps_ < 1.0f ? "unlimited" : "%.0f"))
         app.set_target_fps(target_fps_);
 
-    if (ImGui::SliderInt("max iter", &max_iter_, 16, 1024))
+    if (ImGui::SliderInt("max iter", &max_iter_, 16, 4096))
         app.set_max_iter(static_cast<uint32_t>(max_iter_));
 
     // ── Engine topology ──

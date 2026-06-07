@@ -260,7 +260,7 @@ static void build_ui(State& s) {
 
     ImGui::Separator();
     ImGui::TextDisabled("Performance");
-    if (ImGui::SliderInt("max iter", &s.max_iter, 16, 1024))
+    if (ImGui::SliderInt("max iter", &s.max_iter, 16, 4096))
         s.app->set_max_iter(static_cast<uint32_t>(s.max_iter));
     if (ImGui::SliderFloat("target fps", &s.target_fps, 0.0f, 120.0f, "%.0f"))
         s.app->set_target_fps(s.target_fps);

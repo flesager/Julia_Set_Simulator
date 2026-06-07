@@ -300,7 +300,7 @@ static void build_ui(State& s) {
 
     ImGui::Separator();
     ImGui::TextDisabled("Performance");
-    ImGui::SliderInt("max iter", &s.max_iter, 16, 1024);
+    ImGui::SliderInt("max iter", &s.max_iter, 16, 4096);
 
     ImGui::End();
 }

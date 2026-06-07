@@ -53,7 +53,7 @@ Owns the SDL2 window, OpenGL 3.3 Core context, and Dear ImGui lifecycle.
 | Pipeline | Start / Stop button |
 | Julia c | `−` · `a (real)` slider (−2 … +2) · `+` and `−` · `b (imag)` slider · `+`; each button steps by **0.0005** |
 | Viewport | zoom (log, 0.01 … 5000), center x/y (−2 … +2) |
-| Performance | target FPS (0 = unlimited), max iterations (16 … 1024) |
+| Performance | target FPS (0 = unlimited), max iterations (16 … 4096) |
 | Engine | threads (1 … 100), compute procs (1 … 100) + "Apply & restart" |
 
 **Mouse interaction on the fractal viewport:**
