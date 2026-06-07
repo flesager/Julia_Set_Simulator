@@ -7,10 +7,11 @@ bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "emsdk", version = "6.0.0")
 
-# Points to the locally installed emsdk (~/.emsdk)
-local_path_override(
+git_override(
     module_name = "emsdk",
-    path = "/home/flesager/emsdk/bazel",
+    remote = "https://github.com/emscripten-core/emsdk.git",
+    strip_prefix = "bazel",
+    tag = "6.0.0",
 )
 
 emscripten_deps = use_extension("@emsdk//:emscripten_deps.bzl", "emscripten_deps")
