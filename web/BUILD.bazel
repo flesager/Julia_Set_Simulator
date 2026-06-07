@@ -1,27 +1,39 @@
 package(default_visibility = ["//visibility:public"])
 
-# Assembles the deployable web directory from WASM outputs + static assets
+# Assembles the deployable web directory from WASM outputs + static assets.
+# Contains both single-threaded (julia_st) and multi-threaded (julia_mt) binaries.
+# index.html detects window.crossOriginIsolated at runtime and loads the right one.
 genrule(
     name = "dist",
     srcs = [
         "index.html",
         "style.css",
-        "//src/hello:hello_wasm",
+        "//app:julia_st_wasm",
+        "//app:julia_mt_wasm",
     ],
     outs = [
         "dist/index.html",
-        "dist/hello.js",
-        "dist/hello.wasm",
+        "dist/julia_st.js",
+        "dist/julia_st.wasm",
+        "dist/julia_mt.js",
+        "dist/julia_mt.wasm",
         "dist/style.css",
     ],
     cmd = """
         cp $(location index.html) $(RULEDIR)/dist/index.html
         cp $(location style.css)  $(RULEDIR)/dist/style.css
-        for f in $(locations //src/hello:hello_wasm); do
+        for f in $(locations //app:julia_st_wasm); do
             base=$$(basename $$f)
             case $$base in
-                hello.js)   cp $$f $(RULEDIR)/dist/hello.js ;;
-                hello.wasm) cp $$f $(RULEDIR)/dist/hello.wasm ;;
+                julia_st.js)   cp $$f $(RULEDIR)/dist/julia_st.js ;;
+                julia_st.wasm) cp $$f $(RULEDIR)/dist/julia_st.wasm ;;
+            esac
+        done
+        for f in $(locations //app:julia_mt_wasm); do
+            base=$$(basename $$f)
+            case $$base in
+                julia_mt.js)   cp $$f $(RULEDIR)/dist/julia_mt.js ;;
+                julia_mt.wasm) cp $$f $(RULEDIR)/dist/julia_mt.wasm ;;
             esac
         done
     """,

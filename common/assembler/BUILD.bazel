@@ -1,0 +1,15 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "assembler",
+    srcs = ["src/frame_assembler.cpp"],
+    hdrs = ["inc/frame_assembler.hpp"],
+    strip_include_prefix = "inc",
+    include_prefix = "common/assembler",
+    deps = [
+        "//common:messages",
+        "//core/engine:engine",
+    ],
+    copts = ["-std=c++17", "-pthread"],
+    visibility = ["//visibility:public"],
+)

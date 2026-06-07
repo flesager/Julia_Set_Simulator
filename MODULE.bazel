@@ -27,3 +27,72 @@ git_override(
 
 emscripten_deps = use_extension("@emsdk//:emscripten_deps.bzl", "emscripten_deps")
 emscripten_deps.config(version = "6.0.0")
+
+# ImGui (no BCR entry — downloaded directly from GitHub)
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "imgui",
+    urls = ["https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9b.tar.gz"],
+    sha256 = "8e1bbc76c71d74fef2fb85db7e7ca8eba13d6a86623c54992b60162db554ffdb",
+    strip_prefix = "imgui-1.91.9b",
+    build_file_content = """
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "imgui",
+    srcs = [
+        "imgui.cpp",
+        "imgui_draw.cpp",
+        "imgui_tables.cpp",
+        "imgui_widgets.cpp",
+    ],
+    hdrs = [
+        "imgui.h",
+        "imgui_internal.h",
+        "imconfig.h",
+        "imstb_rectpack.h",
+        "imstb_textedit.h",
+        "imstb_truetype.h",
+    ],
+    copts = ["-std=c++17"],
+    visibility = ["//visibility:public"],
+)
+
+# SDL2 + OpenGL3 backend — requires system libsdl2-dev and libgl-dev
+cc_library(
+    name = "imgui_sdl2_gl3",
+    srcs = [
+        "backends/imgui_impl_sdl2.cpp",
+        "backends/imgui_impl_opengl3.cpp",
+    ],
+    hdrs = [
+        "backends/imgui_impl_sdl2.h",
+        "backends/imgui_impl_opengl3.h",
+        "backends/imgui_impl_opengl3_loader.h",
+    ],
+    copts = [
+        "-std=c++17",
+        "-isystem/usr/include/SDL2",
+    ],
+    linkopts = ["-lSDL2", "-lGL"],
+    deps = [":imgui"],
+    visibility = ["//visibility:public"],
+)
+
+# OpenGL3 renderer only — used by the Emscripten WASM build.
+# The platform backend (events + WebGL context) is handled directly
+# via emscripten/html5.h in wasm_main.cpp, so no SDL2 port needed.
+cc_library(
+    name = "imgui_opengl3",
+    srcs = ["backends/imgui_impl_opengl3.cpp"],
+    hdrs = [
+        "backends/imgui_impl_opengl3.h",
+        "backends/imgui_impl_opengl3_loader.h",
+    ],
+    copts = ["-std=c++17"],
+    deps = [":imgui"],
+    visibility = ["//visibility:public"],
+)
+""",
+)

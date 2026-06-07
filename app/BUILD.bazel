@@ -1,0 +1,91 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@emsdk//emscripten_toolchain:wasm_rules.bzl", "wasm_cc_binary")
+
+# Native Julia set simulator with ImGui UI.
+# Requires: sudo apt-get install libsdl2-dev libgl-dev
+cc_binary(
+    name = "julia_app",
+    srcs = [
+        "main.cpp",
+        "app.cpp",
+        "app.hpp",
+        "imgui_layer.cpp",
+        "imgui_layer.hpp",
+    ],
+    copts = [
+        "-std=c++17",
+        "-isystem/usr/include/SDL2",
+    ],
+    deps = [
+        "//common:messages",
+        "//common/assembler:assembler",
+        "//common/compute:compute",
+        "//common/controller:controller",
+        "//core/engine:engine",
+        "@imgui//:imgui_sdl2_gl3",
+    ],
+)
+
+# WASM — single-threaded (julia_st.js / julia_st.wasm)
+# No CoreEngine — computes Julia set synchronously each frame.
+# Runs on any browser, including GitHub Pages (no COOP/COEP required).
+cc_binary(
+    name = "julia_st",
+    srcs = ["wasm_main.cpp"],
+    copts = ["-std=c++17"],
+    linkopts = [
+        "-sUSE_WEBGL2=1",
+        "-sFULL_ES3=1",
+        "-sMIN_WEBGL_VERSION=2",
+        "-sALLOW_MEMORY_GROWTH=1",
+    ],
+    tags = ["manual"],  # Emscripten-only; built via julia_st_wasm, not by //...
+    deps = [
+        "@imgui//:imgui_opengl3",
+    ],
+)
+
+wasm_cc_binary(
+    name = "julia_st_wasm",
+    cc_target = ":julia_st",
+    visibility = ["//visibility:public"],
+)
+
+# WASM — multi-threaded (julia_mt.js / julia_mt.wasm)
+# Uses CoreEngine reactor with std::thread via -pthread / -sPTHREAD.
+# Requires SharedArrayBuffer: loaded by index.html only when crossOriginIsolated is true.
+cc_binary(
+    name = "julia_mt",
+    srcs = [
+        "wasm_mt_main.cpp",
+        "app.cpp",
+        "app.hpp",
+    ],
+    copts = [
+        "-std=c++17",
+        "-pthread",
+    ],
+    linkopts = [
+        "-pthread",
+        "-sPTHREAD_POOL_SIZE=8",
+        "-sUSE_WEBGL2=1",
+        "-sFULL_ES3=1",
+        "-sMIN_WEBGL_VERSION=2",
+        "-sALLOW_MEMORY_GROWTH=1",
+    ],
+    tags = ["manual"],  # Emscripten-only; built via julia_mt_wasm, not by //...
+    deps = [
+        "//common:messages",
+        "//common/assembler:assembler",
+        "//common/compute:compute",
+        "//common/controller:controller",
+        "//core/engine:engine",
+        "@imgui//:imgui_opengl3",
+    ],
+)
+
+wasm_cc_binary(
+    name = "julia_mt_wasm",
+    cc_target = ":julia_mt",
+    visibility = ["//visibility:public"],
+)

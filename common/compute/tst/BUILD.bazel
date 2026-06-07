@@ -1,0 +1,14 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+cc_test(
+    name = "compute_proc_obj_test",
+    srcs = ["test_compute_proc_obj.cpp"],
+    deps = [
+        "//common/compute:compute",
+        "//common/tst:test_utils",
+        "//core/engine:engine",
+        "@googletest//:gtest_main",
+    ],
+    copts = ["-std=c++17"],
+    timeout = "short",
+)

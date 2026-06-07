@@ -1,0 +1,15 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "controller",
+    srcs = ["src/frame_controller.cpp"],
+    hdrs = ["inc/frame_controller.hpp"],
+    strip_include_prefix = "inc",
+    include_prefix = "common/controller",
+    deps = [
+        "//common:messages",
+        "//core/engine:engine",
+    ],
+    copts = ["-std=c++17", "-pthread"],
+    visibility = ["//visibility:public"],
+)

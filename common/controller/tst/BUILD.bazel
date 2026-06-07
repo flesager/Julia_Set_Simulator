@@ -1,0 +1,14 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+cc_test(
+    name = "frame_controller_test",
+    srcs = ["test_frame_controller.cpp"],
+    deps = [
+        "//common/controller:controller",
+        "//common/tst:test_utils",
+        "//core/engine:engine",
+        "@googletest//:gtest_main",
+    ],
+    copts = ["-std=c++17"],
+    timeout = "short",
+)

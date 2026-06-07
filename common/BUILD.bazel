@@ -1,0 +1,10 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "messages",
+    hdrs = ["inc/messages.hpp"],
+    strip_include_prefix = "inc",
+    include_prefix = "common",
+    deps = ["//core/engine:engine"],
+    visibility = ["//visibility:public"],
+)

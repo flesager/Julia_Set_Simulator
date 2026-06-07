@@ -9,5 +9,5 @@ cc_library(
     # Headers exposed as "core/engine/<name>.hpp" to all dependents
     strip_include_prefix = "inc",
     include_prefix = "core/engine",
-    copts = ["-std=c++17"],
+    copts = ["-std=c++17", "-pthread"],
 )

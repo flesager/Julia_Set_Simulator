@@ -1,0 +1,9 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "test_utils",
+    hdrs = ["test_utils.hpp"],
+    strip_include_prefix = "/common/tst",
+    deps = ["//core/engine:engine"],
+    visibility = ["//common:__subpackages__"],
+)

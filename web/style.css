@@ -18,7 +18,8 @@ body {
 canvas {
   display: block;
   width: 100%;
-  height: 100%;
+  height: auto;              /* proportional scaling — no non-uniform stretch */
+  image-rendering: pixelated; /* nearest-neighbor when CSS-scaled, keeps pixels crisp */
 }
 
 #status {
