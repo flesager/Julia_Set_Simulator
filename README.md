@@ -85,7 +85,7 @@ Pushes to `main` deploy automatically to GitHub Pages via `.github/workflows/pag
 ## Project structure
 
 ```
-various_wasm/
+julia_set_simulator/
 ├── MODULE.bazel              # Bzlmod deps: rules_cc, emsdk, googletest, imgui
 ├── .bazelrc                  # Global Bazel flags
 ├── install.sh                # Host environment setup (apt packages + Bazelisk)
