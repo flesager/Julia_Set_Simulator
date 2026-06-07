@@ -1,2 +1,2 @@
 # various_wasm
-no a specific projet
+not a specific projet
