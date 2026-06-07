@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>various_wasm</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Canvas target for ImGui/WebGL rendering -->
+  <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
+  <div id="status">Loading...</div>
+  <div id="output"></div>
+
+  <script>
+    var Module = {
+      canvas: document.getElementById('canvas'),
+      print: function(text) {
+        var el = document.getElementById('output');
+        el.innerHTML += text + '<br>';
+      },
+      setStatus: function(text) {
+        document.getElementById('status').innerText = text;
+      },
+    };
+  </script>
+
+  <script src="hello.js"></script>
+</body>
+</html>

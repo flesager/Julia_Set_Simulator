@@ -1,0 +1,33 @@
+# Bazel build outputs
+bazel-bin
+bazel-out
+bazel-testlogs
+bazel-various_wasm
+
+# Bazel user settings (machine-specific)
+user.bazelrc
+
+# Emscripten cache and temp files
+.emscripten
+.emscripten_cache/
+.emscripten_ports/
+
+# C++ build artifacts
+*.o
+*.a
+*.so
+*.out
+
+# WebAssembly build artifacts (when built outside Bazel)
+*.wasm
+*.js.map
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo

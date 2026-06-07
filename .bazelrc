@@ -1,0 +1,6 @@
+# Common options
+build --enable_bzlmod
+build --cxxopt=-std=c++17
+
+# Required for Bazel's C++ toolchain resolution
+build --incompatible_enable_cc_toolchain_resolution

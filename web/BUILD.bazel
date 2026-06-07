@@ -1,0 +1,28 @@
+package(default_visibility = ["//visibility:public"])
+
+# Assembles the deployable web directory from WASM outputs + static assets
+genrule(
+    name = "dist",
+    srcs = [
+        "index.html",
+        "style.css",
+        "//src/hello:hello_wasm",
+    ],
+    outs = [
+        "dist/index.html",
+        "dist/hello.js",
+        "dist/hello.wasm",
+        "dist/style.css",
+    ],
+    cmd = """
+        cp $(location index.html) $(RULEDIR)/dist/index.html
+        cp $(location style.css)  $(RULEDIR)/dist/style.css
+        for f in $(locations //src/hello:hello_wasm); do
+            base=$$(basename $$f)
+            case $$base in
+                hello.js)   cp $$f $(RULEDIR)/dist/hello.js ;;
+                hello.wasm) cp $$f $(RULEDIR)/dist/hello.wasm ;;
+            esac
+        done
+    """,
+)
