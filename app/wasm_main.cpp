@@ -279,17 +279,52 @@ static void build_ui(State& s) {
 
     ImGui::Separator();
     ImGui::TextDisabled("Julia  c = a + bi");
-    float bw = ImGui::GetFrameHeight(), sp = ImGui::GetStyle().ItemSpacing.x;
-    if (ImGui::Button("-##ar")) s.c_real -= 0.0005f; ImGui::SameLine();
-    ImGui::SetNextItemWidth(-bw - sp);
-    ImGui::SliderFloat("##ar", &s.c_real, -2.0f, 2.0f, "a=%.4f");
-    ImGui::SameLine();
-    if (ImGui::Button("+##ar")) s.c_real += 0.0005f;
-    if (ImGui::Button("-##ai")) s.c_imag -= 0.0005f; ImGui::SameLine();
-    ImGui::SetNextItemWidth(-bw - sp);
-    ImGui::SliderFloat("##ai", &s.c_imag, -2.0f, 2.0f, "b=%.4f");
-    ImGui::SameLine();
-    if (ImGui::Button("+##ai")) s.c_imag += 0.0005f;
+    float step   = 0.0005f;
+    float bw     = ImGui::GetFrameHeight();
+    float sp     = ImGui::GetStyle().ItemSpacing.x;
+    float sq     = 150.0f;
+    float base_x = ImGui::GetCursorPosX();
+    float base_y = ImGui::GetCursorPosY();
+    float y_mid  = base_y + bw + sp;
+    float mid_yo = (sq - bw) * 0.5f;
+    // +b above square, centred
+    ImGui::SetCursorPos(ImVec2(base_x + bw + sp + (sq - bw) * 0.5f, base_y));
+    if (ImGui::Button("+##bi")) s.c_imag += step;
+    // -a left of square, vertically centred
+    ImGui::SetCursorPos(ImVec2(base_x, y_mid + mid_yo));
+    if (ImGui::Button("-##ar")) s.c_real -= step;
+    // 2D picker square
+    ImGui::SetCursorPos(ImVec2(base_x + bw + sp, y_mid));
+    ImVec2 sq_scr = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##julia_2d", ImVec2(sq, sq));
+    if (ImGui::IsItemActive()) {
+        ImVec2 mp = ImGui::GetIO().MousePos;
+        float  nx = fminf(fmaxf((mp.x - sq_scr.x) / sq, 0.0f), 1.0f);
+        float  ny = fminf(fmaxf((mp.y - sq_scr.y) / sq, 0.0f), 1.0f);
+        s.c_real  = -2.0f + nx * 4.0f;
+        s.c_imag  =  2.0f - ny * 4.0f;
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2      p2 = ImVec2(sq_scr.x + sq, sq_scr.y + sq);
+    dl->AddRectFilled(sq_scr, p2, IM_COL32(30, 30, 30, 255));
+    dl->AddRect(sq_scr, p2, IM_COL32(150, 150, 150, 255));
+    dl->AddLine(ImVec2(sq_scr.x,             sq_scr.y + sq * 0.5f),
+                ImVec2(p2.x,                 sq_scr.y + sq * 0.5f), IM_COL32(60, 60, 60, 255));
+    dl->AddLine(ImVec2(sq_scr.x + sq * 0.5f, sq_scr.y),
+                ImVec2(sq_scr.x + sq * 0.5f, p2.y),                IM_COL32(60, 60, 60, 255));
+    float px = sq_scr.x + (s.c_real + 2.0f) / 4.0f * sq;
+    float py = sq_scr.y + (2.0f - s.c_imag) / 4.0f * sq;
+    dl->AddCircleFilled(ImVec2(px, py), 5.0f, IM_COL32(255, 100,  50, 255));
+    dl->AddCircle(      ImVec2(px, py), 5.0f, IM_COL32(255, 200, 150, 255));
+    // +a right of square, vertically centred
+    ImGui::SetCursorPos(ImVec2(base_x + bw + sp + sq + sp, y_mid + mid_yo));
+    if (ImGui::Button("+##ar")) s.c_real += step;
+    // -b below square, centred
+    ImGui::SetCursorPos(ImVec2(base_x + bw + sp + (sq - bw) * 0.5f, y_mid + sq + sp));
+    if (ImGui::Button("-##bi")) s.c_imag -= step;
+    // value readout and cursor advance
+    ImGui::SetCursorPos(ImVec2(base_x, y_mid + sq + sp + bw + sp));
+    ImGui::Text("a=%.4f  b=%.4f", s.c_real, s.c_imag);
 
     ImGui::Separator();
     ImGui::TextDisabled("Viewport");
