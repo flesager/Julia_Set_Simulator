@@ -1,0 +1,2 @@
+# Patch files for external dependencies
+exports_files(glob(["*.patch"]))

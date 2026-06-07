@@ -5,6 +5,17 @@ module(
 
 bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "googletest", version = "1.17.0")
+archive_override(
+    module_name = "googletest",
+    urls = ["https://github.com/google/googletest/archive/refs/tags/v1.17.0.tar.gz"],
+    strip_prefix = "googletest-1.17.0",
+    patches = [
+        "//patches:googletest_module.patch",
+        "//patches:googletest_build.patch",
+    ],
+    patch_strip = 1,
+)
 bazel_dep(name = "emsdk", version = "6.0.0")
 
 git_override(

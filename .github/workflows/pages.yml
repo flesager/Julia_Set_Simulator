@@ -16,7 +16,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bazelisk
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64 \
+            -o "$HOME/.local/bin/bazel"
+          chmod +x "$HOME/.local/bin/bazel"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel
+          key: ${{ runner.os }}-bazel-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-keys: ${{ runner.os }}-bazel-
+
+      - name: Run tests
+        run: bazel test //...
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +72,7 @@ jobs:
           path: bazel-bin/web/dist
 
   deploy:
-    needs: build
+    needs: [test, build]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

@@ -1,0 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+# Implementation unit tests (white-box: access to internals via friend or direct inclusion)
+# Add Google Test to MODULE.bazel then define cc_test targets here.

@@ -1,0 +1,13 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "engine",
+    srcs = glob(["src/*.cpp"]),
+    hdrs = glob(["inc/*.hpp"]),
+    # Headers exposed as "core/engine/<name>.hpp" to all dependents
+    strip_include_prefix = "inc",
+    include_prefix = "core/engine",
+    copts = ["-std=c++17"],
+)

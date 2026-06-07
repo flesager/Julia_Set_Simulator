@@ -1,0 +1,12 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+# API integration tests (black-box: only public headers)
+cc_test(
+    name = "core_engine_test",
+    srcs = ["test_core_engine.cpp"],
+    deps = [
+        "//core/engine:engine",
+        "@googletest//:gtest_main",
+    ],
+    copts = ["-std=c++17"],
+)
