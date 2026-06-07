@@ -60,14 +60,16 @@ void CoreEngine::worker_loop() {
             ready_queue_.pop();
         }
 
-        // Drain all pending messages for this ProcObj
-        while (auto msg = obj->pop_msg()) {
+        // Drain messages; stop mid-drain if the engine is shutting down
+        while (running_) {
+            auto msg = obj->pop_msg();
+            if (!msg) break;
             obj->process_msg(std::move(msg));
         }
 
         // Release the slot; if new messages arrived during processing, re-schedule
         obj->scheduled_.store(false);
-        if (obj->has_messages()) {
+        if (running_ && obj->has_messages()) {
             bool expected = false;
             if (obj->scheduled_.compare_exchange_strong(expected, true)) {
                 schedule(obj);

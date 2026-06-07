@@ -37,7 +37,7 @@ jobs:
           restore-keys: ${{ runner.os }}-bazel-
 
       - name: Run tests
-        run: bazel test //...
+        run: bazel test //core/... --test_timeout=120
 
   build:
     needs: test

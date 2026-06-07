@@ -219,6 +219,43 @@ TEST(CoreEngineTest, PostFromMultipleThreadsAllReceived) {
 // Multiple ProcObjs
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Shutdown responsiveness
+// ---------------------------------------------------------------------------
+
+// Regression: without the running_ check in the drain loop, stop() would block
+// in join() until every queued message was processed (20 × 5ms = 100ms here).
+TEST(CoreEngineTest, StopIsResponsiveDuringDrain) {
+    CoreEngine engine;
+    engine.start(1);
+
+    class SlowObj : public ProcObj {
+    public:
+        std::atomic<uint32_t> count{0};
+        void process_msg(std::unique_ptr<Message>) override {
+            std::this_thread::sleep_for(5ms);
+            ++count;
+        }
+    };
+
+    auto obj = std::make_shared<SlowObj>();
+    engine.add_proc_obj(obj);
+
+    constexpr uint32_t msg_count = 20; // full drain = 20 × 5ms = 100ms
+    for (uint32_t msg_idx = 0; msg_idx < msg_count; ++msg_idx)
+        obj->post(std::make_unique<IntMessage>(static_cast<int32_t>(msg_idx)));
+
+    auto t0 = std::chrono::steady_clock::now();
+    engine.stop();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+
+    // stop() should return well before a full drain (< half of 100ms)
+    EXPECT_LT(elapsed_ms, static_cast<int64_t>(50));
+    // and definitely not all messages were processed
+    EXPECT_LT(obj->count.load(), msg_count);
+}
+
 TEST(CoreEngineTest, MultipleProcObjsRunIndependently) {
     CoreEngine engine;
     engine.start(4);

@@ -9,4 +9,5 @@ cc_test(
         "@googletest//:gtest_main",
     ],
     copts = ["-std=c++17"],
+    timeout = "short",
 )
