@@ -27,6 +27,14 @@ public:
         float    zoom{1.0f};
         uint32_t max_iter{128};
         float    target_fps{60.0f};  // 0 = unlimited
+        float    cache_margin{1.5f}; // overscan factor; cache = img * margin in each dimension
+    };
+
+    // Snapshot of the cache parameters, readable from the UI thread.
+    struct CacheInfo {
+        float    cx{0.0f}, cy{0.0f}, zoom{1.0f};
+        uint32_t width{800}, height{600};
+        bool     valid{false};
     };
 
     FrameControllerProcObj(Config cfg,
@@ -40,16 +48,23 @@ public:
     void set_julia_c(float real, float imag);
     void set_zoom(float zoom);
     void set_center(float cx, float cy);
+    void set_view(float zoom, float cx, float cy);
     void set_max_iter(uint32_t max_iter);
 
     void pause();   // stop dispatching frames after the current one finishes
     void resume();  // re-enter the frame loop from the UI thread
 
-    float    get_fps()      const;
-    bool     is_paused()    const;
+    float     get_fps()            const;
+    int64_t   get_last_frame_ms()  const;
+    bool      is_paused()          const;
+    CacheInfo get_cache_info()     const;
+    uint32_t  cache_width()    const { return cache_w_; }
+    uint32_t  cache_height()   const { return cache_h_; }
 
 private:
-    void dispatch_frame();
+    void dispatch_frame(bool force = false);
+    bool is_cache_hit() const;
+    void wake_if_idle();
 
     Config cfg_;
     std::vector<std::shared_ptr<core::engine::ProcObj>> compute_procs_;
@@ -64,13 +79,43 @@ private:
     std::atomic<float>    center_y_;
     std::atomic<uint32_t> max_iter_;
     std::atomic<bool>     paused_{false};
-    std::atomic<float>    fps_{0.0f};
+    std::atomic<float>   fps_{0.0f};
+    std::atomic<int64_t> last_frame_ms_{0};
 
     // Rolling average over the last fps_window_size frames
     static constexpr uint8_t fps_window_size = 30;
     std::array<int64_t, fps_window_size> frame_times_ms_{};
     uint8_t fps_idx_{0};
     uint8_t fps_filled_{0};
+
+    // Cache geometry (const after construction)
+    uint32_t cache_w_{0};
+    uint32_t cache_h_{0};
+    float    ref_dim_{600.0f}; // min(img_width, img_height) — reference for scale calc
+
+    // Cache validity state (only touched on the controller thread via message queue)
+    float    cache_c_real_{-0.7f};
+    float    cache_c_imag_{0.27015f};
+    uint32_t cache_max_iter_{128};
+    // Readable from the UI thread (get_cache_info), so must be atomic.
+    std::atomic<bool> cache_valid_{false};
+
+    // Cache center/zoom — also read by get_cache_info() from the UI thread.
+    // Updated only when a frame fully completes (FrameDoneMsg), so they always
+    // reflect what is actually in the assembled texture.
+    std::atomic<float> cache_cx_{0.0f};
+    std::atomic<float> cache_cy_{0.0f};
+    std::atomic<float> cache_zoom_{1.0f};
+
+    // Parameters sent with the most-recent dispatch; transferred to the cache
+    // atomics above once the assembler confirms all tiles are done.
+    float pending_cx_{0.0f};
+    float pending_cy_{0.0f};
+    float pending_zoom_{1.0f};
+
+    // Set true when cache is valid and pipeline is resting (no pending frame in flight).
+    // Setters exchange this to false and re-enter dispatch_frame when they change a param.
+    std::atomic<bool> cache_idle_{false};
 };
 
 } // namespace common::controller

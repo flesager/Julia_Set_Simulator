@@ -9,19 +9,23 @@
 using namespace core::engine;
 using common::controller::FrameControllerProcObj;
 
-// 4×4 image, 2×2 tiles → 4 tiles per frame
-static constexpr uint32_t k_img_w   = 4;
-static constexpr uint32_t k_img_h   = 4;
-static constexpr uint32_t k_tile_sz = 2;
-static constexpr uint32_t k_tiles   = (k_img_w / k_tile_sz) * (k_img_h / k_tile_sz);
+// 4×4 image, 2×2 tiles, cache_margin=1.5 → cache 6×6 → 9 tiles per frame
+static constexpr uint32_t k_img_w    = 4;
+static constexpr uint32_t k_img_h    = 4;
+static constexpr uint32_t k_tile_sz  = 2;
+static constexpr float    k_margin   = 1.5f;
+static constexpr uint32_t k_cache_w  = static_cast<uint32_t>(k_img_w * k_margin); // 6
+static constexpr uint32_t k_cache_h  = static_cast<uint32_t>(k_img_h * k_margin); // 6
+static constexpr uint32_t k_tiles    = (k_cache_w / k_tile_sz) * (k_cache_h / k_tile_sz); // 9
 
 // Base config used by all tests; target_fps=0 disables the throttle sleep
 static FrameControllerProcObj::Config make_cfg(float c_real = -0.7f, float c_imag = 0.27015f) {
     FrameControllerProcObj::Config cfg;
-    cfg.img_width  = k_img_w;
-    cfg.img_height = k_img_h;
-    cfg.tile_width = k_tile_sz;
-    cfg.tile_height = k_tile_sz;
+    cfg.img_width    = k_img_w;
+    cfg.img_height   = k_img_h;
+    cfg.tile_width   = k_tile_sz;
+    cfg.tile_height  = k_tile_sz;
+    cfg.cache_margin = k_margin;
     cfg.c_real     = c_real;
     cfg.c_imag     = c_imag;
     cfg.center_x   = 0.0f;
@@ -73,17 +77,18 @@ TEST(FrameControllerTest, TilesCoverFullImage) {
     ASSERT_TRUE(wait_until([&] { return capture->count.load() == k_tiles; }));
     engine.stop();
 
-    // Sum of tile areas must equal image area
+    // Sum of tile areas must equal the cache buffer area (img * margin each dimension)
     uint32_t total_pixels = 0;
     for (auto& msg : capture->messages()) {
         auto* work = dynamic_cast<common::TileWorkMsg*>(msg.get());
         ASSERT_NE(work, nullptr);
         total_pixels += work->width * work->height;
     }
-    EXPECT_EQ(total_pixels, k_img_w * k_img_h);
+    EXPECT_EQ(total_pixels, k_cache_w * k_cache_h);
 }
 
-TEST(FrameControllerTest, FrameDoneMsgTriggersNextDispatch) {
+// With no param change after frame done the controller goes idle (cache is valid).
+TEST(FrameControllerTest, FrameDoneWithNoChangeGoesIdle) {
     CoreEngine engine;
     engine.start(2);
 
@@ -94,17 +99,38 @@ TEST(FrameControllerTest, FrameDoneMsgTriggersNextDispatch) {
     engine.add_proc_obj(capture);
     engine.add_proc_obj(controller);
 
-    // Wait for first frame
     ASSERT_TRUE(wait_until([&] { return capture->count.load() == k_tiles; }));
 
-    // Simulate assembler signalling frame complete
     send_frame_done(controller, 0);
 
-    // Second frame should arrive
+    // Pipeline should go idle — no second dispatch.
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    EXPECT_EQ(capture->count.load(), k_tiles);
+    engine.stop();
+}
+
+// A param change before frame done causes the next frame to be dispatched.
+TEST(FrameControllerTest, ParamChangeThenFrameDoneTriggersRedispatch) {
+    CoreEngine engine;
+    engine.start(2);
+
+    auto capture    = std::make_shared<CaptureProcObj>();
+    auto controller = std::make_shared<FrameControllerProcObj>(
+        make_cfg(), std::vector<std::shared_ptr<ProcObj>>{capture});
+
+    engine.add_proc_obj(capture);
+    engine.add_proc_obj(controller);
+
+    ASSERT_TRUE(wait_until([&] { return capture->count.load() == k_tiles; }));
+
+    controller->set_julia_c(-0.1f, 0.65f);   // invalidate cache
+    send_frame_done(controller, 0);
+
+    // Second frame should arrive.
     ASSERT_TRUE(wait_until([&] { return capture->count.load() == k_tiles * 2u; }));
     engine.stop();
 
-    // All messages in the second batch should carry frame_id == 1
+    // Second batch should carry frame_id == 1.
     auto& msgs = capture->messages();
     for (uint32_t msg_idx = k_tiles; msg_idx < k_tiles * 2u; ++msg_idx) {
         auto* work = dynamic_cast<common::TileWorkMsg*>(msgs[msg_idx].get());
@@ -214,7 +240,10 @@ TEST(FrameControllerTest, TilesDistributedAcrossComputeProcs) {
     }));
     engine.stop();
 
-    // With round-robin and 4 tiles → 2 compute procs: each gets exactly 2
-    EXPECT_EQ(capture_a->count.load(), k_tiles / 2);
-    EXPECT_EQ(capture_b->count.load(), k_tiles / 2);
+    // Round-robin over k_tiles: one proc gets ceil, the other floor.
+    uint32_t a = capture_a->count.load();
+    uint32_t b = capture_b->count.load();
+    EXPECT_EQ(a + b, k_tiles);
+    EXPECT_GE(a, k_tiles / 2);
+    EXPECT_GE(b, k_tiles / 2);
 }

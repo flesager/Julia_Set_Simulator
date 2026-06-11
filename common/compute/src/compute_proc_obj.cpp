@@ -50,8 +50,9 @@ static std::vector<uint32_t> compute_tile(const common::TileWorkMsg& work) {
     pixels.reserve(work.width * work.height);
 
     // Scale maps one pixel to the complex plane; zoom > 1 zooms in
+    // Use display dimensions for scale so cache pixels have the same resolution as display pixels.
     float scale = 2.0f / (work.zoom
-                          * static_cast<float>(std::min(work.img_width, work.img_height)));
+                          * static_cast<float>(std::min(work.display_width, work.display_height)));
 
     for (uint32_t row_idx = 0; row_idx < work.height; ++row_idx) {
         float zi_px = (static_cast<float>(work.y0 + row_idx)

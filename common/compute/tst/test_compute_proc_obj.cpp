@@ -21,8 +21,10 @@ static std::unique_ptr<common::TileWorkMsg> make_work(
     work->y0          = y0;
     work->width       = w;
     work->height      = h;
-    work->img_width   = 64;
-    work->img_height  = 64;
+    work->img_width      = 64;
+    work->img_height     = 64;
+    work->display_width  = 64;
+    work->display_height = 64;
     work->c_real      = -0.7f;
     work->c_imag      = 0.27015f;
     work->center_x    = 0.0f;

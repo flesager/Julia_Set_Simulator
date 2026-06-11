@@ -42,9 +42,12 @@ static uint32_t iter_to_rgba(uint32_t iter, uint32_t max_iter) {
 // Global render state (safe across emscripten_set_main_loop's longjmp)
 // ---------------------------------------------------------------------------
 
-static constexpr int k_img_w  = 800;
-static constexpr int k_img_h  = 600;
-static constexpr int k_ctrl_w = 300;
+static constexpr int   k_img_w   = 800;
+static constexpr int   k_img_h   = 600;
+static constexpr int   k_ctrl_w  = 300;
+static constexpr float k_margin  = 1.5f;
+static constexpr int   k_cache_w = static_cast<int>(k_img_w * k_margin);
+static constexpr int   k_cache_h = static_cast<int>(k_img_h * k_margin);
 
 struct State {
     EMSCRIPTEN_WEBGL_CONTEXT_HANDLE gl_ctx{0};
@@ -57,14 +60,19 @@ struct State {
     float center_x{0.0f};
     float center_y{0.0f};
     int   max_iter{128};
-    bool  paused{false};
-
-    // Pixel buffer (RGBA, row-major)
+    // Pixel buffer (RGBA, row-major) — sized to cache (k_cache_w × k_cache_h)
     std::vector<uint32_t> pixels;
 
-    // FPS measurement
+    // Cache validity: what params were used to fill pixels[]
+    float cache_cx{0.0f};
+    float cache_cy{0.0f};
+    float cache_zoom{0.0f};   // 0 = never computed
+    float cache_c_real{0.0f};
+    float cache_c_imag{0.0f};
+    int   cache_max_iter{0};
+
     double last_time_ms{0.0};
-    float  fps{0.0f};
+    double last_calc_ms{0.0};
 
     // ImGui mouse state (updated by HTML5 callbacks)
     float mouse_x{0.0f};
@@ -222,21 +230,45 @@ static void handle_fractal_input(State& s, float bx, float by) {
 // Frame computation
 // ---------------------------------------------------------------------------
 
-static void compute_frame(State& s) {
-    float aspect = static_cast<float>(k_img_w) / static_cast<float>(k_img_h);
-    float scale  = 2.0f / s.zoom;
+// Returns true if the current viewport is fully inside the already-computed cache.
+static bool cache_hit(const State& s) {
+    if (s.cache_zoom == 0.0f) return false;
+    if (s.c_real != s.cache_c_real || s.c_imag != s.cache_c_imag ||
+        s.max_iter != s.cache_max_iter) return false;
 
-    for (int py = 0; py < k_img_h; ++py) {
-        float zi = (static_cast<float>(py) / static_cast<float>(k_img_h) - 0.5f)
-                   * scale + s.center_y;
-        for (int px = 0; px < k_img_w; ++px) {
-            float zr = (static_cast<float>(px) / static_cast<float>(k_img_w) - 0.5f)
-                       * scale * aspect + s.center_x;
+    float ref   = static_cast<float>(std::min(k_img_w, k_img_h));
+    float ratio = s.cache_zoom / s.zoom;
+    if (ratio < 1.0f / k_margin) return false;  // too zoomed in → recompute
+    float opx   = (s.center_x - s.cache_cx) * s.cache_zoom * ref / 2.0f;
+    float opy   = (s.center_y - s.cache_cy) * s.cache_zoom * ref / 2.0f;
+    float dhw   = static_cast<float>(k_img_w) * 0.5f * ratio;
+    float dhh   = static_cast<float>(k_img_h) * 0.5f * ratio;
+    float cw2   = static_cast<float>(k_cache_w) * 0.5f;
+    float ch2   = static_cast<float>(k_cache_h) * 0.5f;
+    return (cw2 + opx - dhw >= 0.0f) && (cw2 + opx + dhw <= static_cast<float>(k_cache_w)) &&
+           (ch2 + opy - dhh >= 0.0f) && (ch2 + opy + dhh <= static_cast<float>(k_cache_h));
+}
+
+static void compute_frame(State& s) {
+    // Scale uses display dims so cache pixels have the same resolution as display pixels.
+    float ref    = static_cast<float>(std::min(k_img_w, k_img_h));
+    float scale  = 2.0f / (s.zoom * ref);
+
+    for (int py = 0; py < k_cache_h; ++py) {
+        float zi = (static_cast<float>(py) - k_cache_h * 0.5f) * scale + s.center_y;
+        for (int px = 0; px < k_cache_w; ++px) {
+            float zr = (static_cast<float>(px) - k_cache_w * 0.5f) * scale + s.center_x;
             uint32_t iter = julia_iter(zr, zi, s.c_real, s.c_imag,
                                        static_cast<uint32_t>(s.max_iter));
-            s.pixels[py * k_img_w + px] = iter_to_rgba(iter, static_cast<uint32_t>(s.max_iter));
+            s.pixels[py * k_cache_w + px] = iter_to_rgba(iter, static_cast<uint32_t>(s.max_iter));
         }
     }
+    s.cache_cx       = s.center_x;
+    s.cache_cy       = s.center_y;
+    s.cache_zoom     = s.zoom;
+    s.cache_c_real   = s.c_real;
+    s.cache_c_imag   = s.c_imag;
+    s.cache_max_iter = s.max_iter;
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +288,21 @@ static void build_ui(State& s) {
         ImGuiWindowFlags_NoTitleBar     | ImGuiWindowFlags_NoResize      |
         ImGuiWindowFlags_NoMove         | ImGuiWindowFlags_NoScrollbar   |
         ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImGui::Image(static_cast<ImTextureID>(s.fractal_tex), ImVec2(fw, fh));
+    // UV sub-rectangle: map current (zoom, center) viewport into the cache texture.
+    ImVec2 uv0(0.0f, 0.0f), uv1(1.0f, 1.0f);
+    if (s.cache_zoom != 0.0f) {
+        float cw    = static_cast<float>(k_cache_w);
+        float ch    = static_cast<float>(k_cache_h);
+        float ref   = static_cast<float>(std::min(k_img_w, k_img_h));
+        float ratio = s.cache_zoom / s.zoom;
+        float opx   = (s.center_x - s.cache_cx) * s.cache_zoom * ref / 2.0f;
+        float opy   = (s.center_y - s.cache_cy) * s.cache_zoom * ref / 2.0f;
+        float dhw   = fw * 0.5f * ratio;
+        float dhh   = fh * 0.5f * ratio;
+        uv0 = ImVec2((cw * 0.5f + opx - dhw) / cw, (ch * 0.5f + opy - dhh) / ch);
+        uv1 = ImVec2((cw * 0.5f + opx + dhw) / cw, (ch * 0.5f + opy + dhh) / ch);
+    }
+    ImGui::Image(static_cast<ImTextureID>(s.fractal_tex), ImVec2(fw, fh), uv0, uv1);
     ImGui::End();
 
     // Controls panel (right)
@@ -268,14 +314,9 @@ static void build_ui(State& s) {
     ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Single-thread (fallback)");
     ImGui::TextDisabled("SharedArrayBuffer unavailable");
     ImGui::Separator();
-    ImGui::Text("FPS  %.1f", s.fps);
+    ImGui::Text("Calc  %.0f ms", s.last_calc_ms);
     ImGui::Separator();
 
-    if (s.paused) {
-        if (ImGui::Button("Start", ImVec2(-1, 0))) s.paused = false;
-    } else {
-        if (ImGui::Button("Stop",  ImVec2(-1, 0))) s.paused = true;
-    }
 
     ImGui::Separator();
     ImGui::TextDisabled("Julia  c = a + bi");
@@ -347,15 +388,10 @@ static void build_ui(State& s) {
 static void render_frame() {
     State& s = g_state;
 
-    // Timestamp at frame start — covers full frame period for accurate FPS.
     double now_ms    = emscripten_get_now();
     double dt_ms     = (s.last_time_ms > 0.0) ? now_ms - s.last_time_ms : 1000.0 / 60.0;
     s.last_time_ms   = now_ms;
     float delta_secs = static_cast<float>(dt_ms / 1000.0);
-    if (dt_ms > 0.0) {
-        float inst_fps = static_cast<float>(1000.0 / dt_ms);
-        s.fps = (s.fps <= 0.0f) ? inst_fps : (0.9f * s.fps + 0.1f * inst_fps);
-    }
 
     // Canvas CSS scale — computed once, shared with input handling and ImGui.
     int    cw, ch;
@@ -371,11 +407,13 @@ static void render_frame() {
     // Fractal-area mouse interaction: pan (drag) and zoom (wheel toward cursor).
     handle_fractal_input(s, backing_mx, backing_my);
 
-    // Compute Julia set and upload to texture
-    if (!s.paused) {
+    // Only recompute when the cache is stale (params changed or viewport left cache bounds).
+    if (!cache_hit(s)) {
+        double t0 = emscripten_get_now();
         compute_frame(s);
+        s.last_calc_ms = emscripten_get_now() - t0;
         glBindTexture(GL_TEXTURE_2D, s.fractal_tex);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, k_img_w, k_img_h,
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, k_cache_w, k_cache_h,
                         GL_RGBA, GL_UNSIGNED_BYTE, s.pixels.data());
     }
 
@@ -399,7 +437,7 @@ static void render_frame() {
 
 int main() {
     State& s = g_state;
-    s.pixels.resize(static_cast<size_t>(k_img_w * k_img_h), 0xFF000000u);
+    s.pixels.resize(static_cast<size_t>(k_cache_w * k_cache_h), 0xFF000000u);
 
     // Create WebGL2 context bound to the HTML <canvas id="canvas">
     EmscriptenWebGLContextAttributes attrs;
@@ -446,7 +484,7 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                 k_img_w, k_img_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                 k_cache_w, k_cache_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
     // Hand control to browser; never returns.
     emscripten_set_main_loop(render_frame, 0, 1);

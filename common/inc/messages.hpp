@@ -12,7 +12,8 @@ struct TileWorkMsg : core::engine::Message {
     uint32_t tile_id{0};
     uint32_t x0{0}, y0{0};           // top-left pixel of this tile
     uint32_t width{0}, height{0};    // tile dimensions
-    uint32_t img_width{0}, img_height{0};
+    uint32_t img_width{0}, img_height{0};       // cache buffer dimensions (for centering)
+    uint32_t display_width{800}, display_height{600}; // display dimensions (for scale)
     float    c_real{-0.7f}, c_imag{0.27015f};
     float    center_x{0.0f}, center_y{0.0f};
     float    zoom{1.0f};

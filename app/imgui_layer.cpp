@@ -4,6 +4,7 @@
 #include "backends/imgui_impl_opengl3.h"
 #include <SDL.h>
 #include <GL/gl.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -15,6 +16,9 @@ static constexpr float k_glsl_version[] = {'#'};   // unused — version passed 
 ImGuiLayer::ImGuiLayer(uint32_t img_w, uint32_t img_h, const AppConfig& cfg)
     : img_w_(img_w)
     , img_h_(img_h)
+    , cache_w_(static_cast<uint32_t>(img_w * cfg.cache_margin))
+    , cache_h_(static_cast<uint32_t>(img_h * cfg.cache_margin))
+    , cache_margin_(cfg.cache_margin)
     , c_real_(cfg.c_real)
     , c_imag_(cfg.c_imag)
     , zoom_(1.0f)
@@ -51,7 +55,8 @@ void ImGuiLayer::init() {
         "Julia Set Simulator",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         win_w, win_h,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI);
+        SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI |
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
     if (!window_) {
         std::fprintf(stderr, "SDL_CreateWindow error: %s\n", SDL_GetError());
         return;
@@ -79,7 +84,7 @@ void ImGuiLayer::init() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                 static_cast<int>(img_w_), static_cast<int>(img_h_),
+                 static_cast<int>(cache_w_), static_cast<int>(cache_h_),
                  0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
     running_ = true;
@@ -104,6 +109,13 @@ void ImGuiLayer::run(App& app) {
     init();
     if (!window_) return;
 
+    // Sync pipeline with the actual window size (maximised window may differ from cfg).
+    {
+        int win_w, win_h;
+        SDL_GetWindowSize(window_, &win_w, &win_h);
+        resize_to(app, win_w, win_h);
+    }
+
     while (running_ && app.is_running()) {
         // Poll SDL events
         SDL_Event ev;
@@ -112,6 +124,9 @@ void ImGuiLayer::run(App& app) {
             if (ev.type == SDL_QUIT) running_ = false;
             if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE)
                 running_ = false;
+            if (ev.type == SDL_WINDOWEVENT &&
+                ev.window.event == SDL_WINDOWEVENT_RESIZED)
+                resize_to(app, ev.window.data1, ev.window.data2);
         }
 
         // Upload the latest completed fractal frame to the GPU texture
@@ -119,7 +134,7 @@ void ImGuiLayer::run(App& app) {
         if (!pixels.empty()) {
             glBindTexture(GL_TEXTURE_2D, fractal_tex_);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-                            static_cast<int>(img_w_), static_cast<int>(img_h_),
+                            static_cast<int>(cache_w_), static_cast<int>(cache_h_),
                             GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
         }
 
@@ -143,6 +158,36 @@ void ImGuiLayer::run(App& app) {
 }
 
 // ---------------------------------------------------------------------------
+// Resize handling
+// ---------------------------------------------------------------------------
+
+void ImGuiLayer::resize_to(App& app, int win_w, int win_h) {
+    auto new_img_w = static_cast<uint32_t>(std::max(1, win_w - k_ctrl_panel_w));
+    auto new_img_h = static_cast<uint32_t>(std::max(1, win_h));
+    if (new_img_w == img_w_ && new_img_h == img_h_) return;
+
+    img_w_   = new_img_w;
+    img_h_   = new_img_h;
+    cache_w_ = static_cast<uint32_t>(img_w_ * cache_margin_);
+    cache_h_ = static_cast<uint32_t>(img_h_ * cache_margin_);
+
+    // Reallocate the fractal texture at the new cache size.
+    glBindTexture(GL_TEXTURE_2D, fractal_tex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                 static_cast<int>(cache_w_), static_cast<int>(cache_h_),
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    // Restart the compute pipeline at the new display resolution,
+    // then re-apply the user's current view and quality settings.
+    app.set_display_size(img_w_, img_h_);
+    app.set_zoom(zoom_);
+    app.set_center(center_x_, center_y_);
+    app.set_julia_c(c_real_, c_imag_);
+    app.set_max_iter(static_cast<uint32_t>(max_iter_));
+    app.set_target_fps(target_fps_);
+}
+
+// ---------------------------------------------------------------------------
 // UI layout
 // ---------------------------------------------------------------------------
 
@@ -159,8 +204,22 @@ void ImGuiLayer::build_ui(App& app) {
         ImGuiWindowFlags_NoTitleBar    | ImGuiWindowFlags_NoResize  |
         ImGuiWindowFlags_NoMove        | ImGuiWindowFlags_NoScrollbar|
         ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImGui::Image(static_cast<ImTextureID>(fractal_tex_),
-                 ImVec2(fw, fh));
+    // Compute UV sub-rectangle: maps current (zoom, center) viewport into the cache texture.
+    auto      ci    = app.get_cache_info();
+    ImVec2    uv0(0.0f, 0.0f), uv1(1.0f, 1.0f);
+    if (ci.valid) {
+        float cw    = static_cast<float>(ci.width);
+        float ch    = static_cast<float>(ci.height);
+        float ref   = static_cast<float>(std::min(img_w_, img_h_));
+        float ratio = ci.zoom / zoom_;
+        float opx   = (center_x_ - ci.cx) * ci.zoom * ref / 2.0f;
+        float opy   = (center_y_ - ci.cy) * ci.zoom * ref / 2.0f;
+        float dhw   = fw * 0.5f * ratio;
+        float dhh   = fh * 0.5f * ratio;
+        uv0 = ImVec2((cw * 0.5f + opx - dhw) / cw, (ch * 0.5f + opy - dhh) / ch);
+        uv1 = ImVec2((cw * 0.5f + opx + dhw) / cw, (ch * 0.5f + opy + dhh) / ch);
+    }
+    ImGui::Image(static_cast<ImTextureID>(fractal_tex_), ImVec2(fw, fh), uv0, uv1);
 
     // Mouse interaction on the fractal viewport
     {
@@ -195,8 +254,7 @@ void ImGuiLayer::build_ui(App& app) {
             float ns  = 2.0f / zoom_;
             center_x_ = zr - (p.x / fw - 0.5f) * ns * asp;
             center_y_ = zi - (p.y / fh - 0.5f) * ns;
-            app.set_zoom(zoom_);
-            app.set_center(center_x_, center_y_);
+            app.set_view(zoom_, center_x_, center_y_);
         }
     }
 
@@ -208,16 +266,7 @@ void ImGuiLayer::build_ui(App& app) {
     ImGui::Begin("Controls", nullptr,
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
 
-    // FPS display
-    ImGui::Text("FPS  %.1f", app.get_fps());
-    ImGui::Separator();
-
-    // Start / Stop
-    if (app.is_paused()) {
-        if (ImGui::Button("Start", ImVec2(-1, 0))) app.resume();
-    } else {
-        if (ImGui::Button("Stop",  ImVec2(-1, 0))) app.pause();
-    }
+    ImGui::Text("Calc  %lld ms", static_cast<long long>(app.get_last_frame_ms()));
 
     // ── Julia parameter ──
     ImGui::Separator();

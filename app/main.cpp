@@ -2,6 +2,7 @@
 #include <atomic>
 #include <csignal>
 #include <cstdlib>
+#include <thread>
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -18,10 +19,12 @@ int main() {
     std::signal(SIGTERM, on_signal);
 
     app::AppConfig cfg;
-    // Defaults produce a classic Julia set at a comfortable 60 fps cap.
-    // These will become ImGui sliders once the graphical layer is added.
-    cfg.num_workers       = 4;
-    cfg.num_compute_procs = 3;
+    {
+        unsigned hw           = std::thread::hardware_concurrency();
+        if (hw == 0) hw       = 4;
+        cfg.num_workers       = static_cast<uint16_t>(hw);
+        cfg.num_compute_procs = static_cast<uint8_t>(std::max(1u, hw - 1u));
+    }
     cfg.img_width         = 800;
     cfg.img_height        = 600;
     cfg.tile_width        = 64;

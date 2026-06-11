@@ -22,9 +22,14 @@ private:
     void init();
     void shutdown();
     void build_ui(App& app);
+    // Resize fractal area + texture + pipeline to match the new window dimensions.
+    void resize_to(App& app, int win_w, int win_h);
 
     uint32_t img_w_;
     uint32_t img_h_;
+    uint32_t cache_w_;
+    uint32_t cache_h_;
+    float    cache_margin_;
 
     // UI state — initialised from AppConfig, then owned by the slider widgets
     float    c_real_;

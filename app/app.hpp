@@ -18,8 +18,12 @@ struct AppConfig {
     uint32_t tile_height{64};
     float    c_real{-0.7f};
     float    c_imag{0.27015f};
+    float    zoom{1.0f};
+    float    center_x{0.0f};
+    float    center_y{0.0f};
     float    target_fps{60.0f};
     uint32_t max_iter{128};
+    float    cache_margin{1.5f}; // overscan factor; cache = img * margin per dimension
 };
 
 class App {
@@ -36,8 +40,18 @@ public:
 
     // ── UI-facing accessors (called from ImGuiLayer on the main thread) ──
 
-    float                 get_fps()          const;
+    float                 get_fps()              const;
+    int64_t               get_last_frame_ms()    const;
+
+    // Resize the fractal pipeline to a new display resolution.
+    // Tears down and restarts the engine; all other cfg params are preserved.
+    void set_display_size(uint32_t w, uint32_t h);
     std::vector<uint32_t> get_latest_frame() const;
+
+    // Cache info needed by the display layer to compute UV sub-rectangle.
+    common::controller::FrameControllerProcObj::CacheInfo get_cache_info() const;
+    uint32_t get_cache_width()  const;
+    uint32_t get_cache_height() const;
 
     bool is_paused() const;
     void pause();
@@ -47,6 +61,7 @@ public:
     void set_julia_c(float real, float imag);
     void set_zoom(float zoom);
     void set_center(float cx, float cy);
+    void set_view(float zoom, float cx, float cy);
     void set_max_iter(uint32_t max_iter);
 
     // Tears down and restarts the engine with new thread/proc counts.

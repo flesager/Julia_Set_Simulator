@@ -12,14 +12,18 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 
 // ---------------------------------------------------------------------------
 // Layout constants (must match wasm_main.cpp)
 // ---------------------------------------------------------------------------
 
-static constexpr int k_img_w  = 800;
-static constexpr int k_img_h  = 600;
-static constexpr int k_ctrl_w = 300;
+static constexpr int   k_img_w    = 800;
+static constexpr int   k_img_h    = 600;
+static constexpr int   k_ctrl_w   = 300;
+static constexpr float k_margin   = 1.5f;
+static constexpr int   k_cache_w  = static_cast<int>(k_img_w * k_margin);
+static constexpr int   k_cache_h  = static_cast<int>(k_img_h * k_margin);
 
 // ---------------------------------------------------------------------------
 // Global render state (safe across emscripten_set_main_loop's longjmp)
@@ -45,9 +49,7 @@ struct State {
     bool  mouse_btn[3]{false, false, false};
     float wheel_dy{0.0f};
 
-    // FPS (render loop rate measured here; pipeline rate from app->get_fps())
     double last_time_ms{0.0};
-    float  render_fps{0.0f};
 
     // Drag-to-pan state
     bool  drag_active{false};
@@ -209,7 +211,22 @@ static void build_ui(State& s) {
         ImGuiWindowFlags_NoTitleBar     | ImGuiWindowFlags_NoResize      |
         ImGuiWindowFlags_NoMove         | ImGuiWindowFlags_NoScrollbar   |
         ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImGui::Image(static_cast<ImTextureID>(s.fractal_tex), ImVec2(fw, fh));
+    // UV sub-rectangle: map current (zoom, center) viewport into the cache texture.
+    auto   ci  = s.app->get_cache_info();
+    ImVec2 uv0(0.0f, 0.0f), uv1(1.0f, 1.0f);
+    if (ci.valid) {
+        float cw    = static_cast<float>(ci.width);
+        float ch    = static_cast<float>(ci.height);
+        float ref   = static_cast<float>(std::min(k_img_w, k_img_h));
+        float ratio = ci.zoom / s.zoom;
+        float opx   = (s.center_x - ci.cx) * ci.zoom * ref / 2.0f;
+        float opy   = (s.center_y - ci.cy) * ci.zoom * ref / 2.0f;
+        float dhw   = fw * 0.5f * ratio;
+        float dhh   = fh * 0.5f * ratio;
+        uv0 = ImVec2((cw * 0.5f + opx - dhw) / cw, (ch * 0.5f + opy - dhh) / ch);
+        uv1 = ImVec2((cw * 0.5f + opx + dhw) / cw, (ch * 0.5f + opy + dhh) / ch);
+    }
+    ImGui::Image(static_cast<ImTextureID>(s.fractal_tex), ImVec2(fw, fh), uv0, uv1);
     ImGui::End();
 
     // Controls panel (right)
@@ -220,18 +237,11 @@ static void build_ui(State& s) {
 
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Multi-thread");
     ImGui::Separator();
-    ImGui::Text("Render   %.1f fps", s.render_fps);
-    ImGui::Text("Pipeline %.1f fps", s.app->get_fps());
+    ImGui::Text("Calc  %lld ms", static_cast<long long>(s.app->get_last_frame_ms()));
     ImGui::Text("Threads  %u workers / %u compute",
                 static_cast<unsigned>(s.app->get_num_workers()),
                 static_cast<unsigned>(s.app->get_num_compute_procs()));
     ImGui::Separator();
-
-    if (s.app->is_paused()) {
-        if (ImGui::Button("Start", ImVec2(-1, 0))) s.app->resume();
-    } else {
-        if (ImGui::Button("Stop",  ImVec2(-1, 0))) s.app->pause();
-    }
 
     ImGui::Separator();
     ImGui::TextDisabled("Julia  c = a + bi");
@@ -316,10 +326,6 @@ static void render_frame() {
     double dt_ms     = (s.last_time_ms > 0.0) ? now_ms - s.last_time_ms : 1000.0 / 60.0;
     s.last_time_ms   = now_ms;
     float delta_secs = static_cast<float>(dt_ms / 1000.0);
-    if (dt_ms > 0.0) {
-        float inst_fps = static_cast<float>(1000.0 / dt_ms);
-        s.render_fps = (s.render_fps <= 0.0f) ? inst_fps : (0.9f * s.render_fps + 0.1f * inst_fps);
-    }
 
     // Canvas CSS scale — computed once, shared with input handling and ImGui.
     int    cw, ch;
@@ -339,7 +345,7 @@ static void render_frame() {
     auto pixels = s.app->get_latest_frame();
     if (!pixels.empty()) {
         glBindTexture(GL_TEXTURE_2D, s.fractal_tex);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, k_img_w, k_img_h,
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, k_cache_w, k_cache_h,
                         GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
     }
 
@@ -367,8 +373,12 @@ int main() {
     // Declared static so the object survives emscripten_set_main_loop's longjmp.
     // The engine is never stopped (no teardown called) — it runs until the tab is closed.
     app::AppConfig cfg;
-    cfg.num_workers       = 4;
-    cfg.num_compute_procs = 3;
+    {
+        unsigned hw           = std::thread::hardware_concurrency();
+        if (hw == 0) hw       = 4;
+        cfg.num_workers       = static_cast<uint16_t>(hw);
+        cfg.num_compute_procs = static_cast<uint8_t>(std::max(1u, hw - 1u));
+    }
     cfg.img_width         = static_cast<uint32_t>(k_img_w);
     cfg.img_height        = static_cast<uint32_t>(k_img_h);
     cfg.tile_width        = 64;
@@ -377,6 +387,7 @@ int main() {
     cfg.c_imag            = s.c_imag;
     cfg.target_fps        = s.target_fps;
     cfg.max_iter          = static_cast<uint32_t>(s.max_iter);
+    cfg.cache_margin      = k_margin;
 
     static app::App julia_app(cfg);
     s.app = &julia_app;
@@ -423,7 +434,7 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                 k_img_w, k_img_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                 k_cache_w, k_cache_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
     // Hand control to the browser; render_frame() is called each requestAnimationFrame.
     emscripten_set_main_loop(render_frame, 0, 1);
