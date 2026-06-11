@@ -13,9 +13,9 @@
 ## Native target (`julia_app`)
 
 ```
-main.cpp  →  App  →  ImGuiLayer (SDL2 + OpenGL3)
-                 └►  CoreEngine  (N worker threads)
-                          ├── ComputeProcObj ×M
+main.cpp  →  App  →  ImGuiLayer (SDL2 + OpenGL3, resizable window)
+                 └►  CoreEngine  (hardware_concurrency() worker threads)
+                          ├── ComputeProcObj ×(hardware_concurrency−1)
                           ├── FrameAssemblerProcObj
                           └── FrameControllerProcObj
 ```
@@ -33,26 +33,31 @@ main.cpp  →  App  →  ImGuiLayer (SDL2 + OpenGL3)
 - `setup()` — creates the three pipeline ProcObjs, wires them up (`assembler->set_controller(controller)`), starts the engine, and adds the ProcObjs in the correct order (compute first, controller last so its `start()` fires after all receivers are registered).
 - `teardown()` — stops the engine, then clears the shared\_ptrs so ProcObjs are destroyed cleanly.
 - `restart(num_workers, num_compute_procs)` — calls `teardown()` + `setup()` with new topology; invoked from the UI when the user changes thread/proc counts.
+- `set_display_size(w, h)` — tears down and restarts the pipeline at a new resolution while preserving all view parameters (zoom, center, Julia *c*, etc.), called when the user resizes the window.
+- `set_view(zoom, cx, cy)` — combined zoom+center setter that stores all three atomics before waking the controller, ensuring `dispatch_frame()` always reads a consistent snapshot.
 - `run()` — native: creates an `ImGuiLayer` and blocks until the window is closed. Under `__EMSCRIPTEN__` the body is compiled out (guarded with `#ifndef __EMSCRIPTEN__`); the render loop is driven by `emscripten_set_main_loop` in the WASM entry points instead.
 
 ### ImGuiLayer (`imgui_layer.cpp` / `imgui_layer.hpp`)
 
-Owns the SDL2 window, OpenGL 3.3 Core context, and Dear ImGui lifecycle.
+Owns the SDL2 window (maximised on startup, freely resizable), OpenGL 3.3 Core context, and Dear ImGui lifecycle.
 
 **Per frame:**
-1. Poll SDL events → forward to ImGui.
+1. Poll SDL events → forward to ImGui; handle `SDL_WINDOWEVENT_RESIZED` by calling `resize_to()`.
 2. Call `app.get_latest_frame()` → upload to a `GL_RGBA` texture via `glTexSubImage2D`.
-3. Build the ImGui UI (`build_ui`).
+3. Build the ImGui UI (`build_ui`): compute UV sub-rectangle from `get_cache_info()`, draw fractal, handle mouse input.
 4. Render ImGui draw data → `SDL_GL_SwapWindow`.
+
+**`resize_to(win_w, win_h)`** updates `img_w_/img_h_` and `cache_w_/cache_h_`, reallocates the GL texture, then calls `app.set_display_size()` which restarts the pipeline with all current view parameters preserved.
+
+**UV sub-rectangle rendering:** the oversized cache texture (1.5× per dimension) is uploaded once per computed frame. Pan and zoom within cache bounds update only the UV sub-rect passed to `ImGui::Image(tex, size, uv0, uv1)` — no recomputation needed. A recompute is triggered only when the viewport leaves the cached region or exceeds the zoom margin.
 
 **UI controls:**
 
 | Section | Controls |
 |---|---|
-| Status | FPS counter |
-| Pipeline | Start / Stop button |
-| Julia c | `−` · `a (real)` slider (−2 … +2) · `+` and `−` · `b (imag)` slider · `+`; each button steps by **0.0005** |
-| Viewport | zoom (log, 0.01 … 5000), center x/y (−2 … +2) |
+| Status | Last frame calculation time (ms) |
+| Julia c | 2D drag picker (±2 on each axis) + ±0.0005 fine-step buttons; value readout below |
+| Viewport | zoom (logarithmic, 0.01 … 5000), center x/y (−2 … +2) |
 | Performance | target FPS (0 = unlimited), max iterations (16 … 4096) |
 | Engine | threads (1 … 100), compute procs (1 … 100) + "Apply & restart" |
 
@@ -63,7 +68,7 @@ Owns the SDL2 window, OpenGL 3.3 Core context, and Dear ImGui lifecycle.
 | Left-button drag | Pan — the complex point under the cursor at drag-start tracks the cursor throughout the drag |
 | Scroll wheel | Zoom toward cursor — the complex point under the cursor stays fixed as zoom changes |
 
-The drag pivot and zoom anchor are computed in the complex plane: `zr = (px/w − 0.5) × scale × aspect + center_x`, `zi = (py/h − 0.5) × scale + center_y`. The center is updated each frame so the grabbed point tracks the mouse.
+The drag pivot and zoom anchor are computed in the complex plane: `zr = (px/w − 0.5) × scale × aspect + center_x`, `zi = (py/h − 0.5) × scale + center_y`. Zoom and center are updated together via `app.set_view()` in a single atomic store+wake to avoid dispatching a frame with mismatched parameters.
 
 ---
 
@@ -102,8 +107,8 @@ wasm_mt_main.cpp  →  emscripten_set_main_loop(render_frame)
                            ├── glTexSubImage2D()         (upload to WebGL2 texture)
                            └── ImGui                     (OpenGL3 renderer backend)
 Web Workers (-sPTHREAD):
-    └── CoreEngine (4 workers)
-            ├── ComputeProcObj ×3    ← tile Julia iterations
+    └── CoreEngine (hardware_concurrency() threads)
+            ├── ComputeProcObj ×(hardware_concurrency−1)  ← tile Julia iterations
             ├── FrameAssemblerProcObj ← assemble tiles → frame
             └── FrameControllerProcObj ← dispatch + pace frame rate
 ```

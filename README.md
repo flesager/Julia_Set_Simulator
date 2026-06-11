@@ -8,10 +8,10 @@ A real-time Julia set fractal renderer written in C++, targeting both **native d
 
 ## Features
 
-- Interactive ImGui control panel: Julia *c* parameter (sliders + `−`/`+` fine-step buttons), zoom, pan, max iterations
+- Interactive ImGui control panel: Julia *c* parameter (2D drag picker ±2 on each axis, with fine-step ±0.0005 buttons), zoom, pan, max iterations
 - **Mouse interaction directly on the fractal**: left-drag to pan, scroll wheel to zoom toward the cursor
-- Start / Stop the render loop at any time
-- Native: tile-based parallel computation via a reactor thread pool (`core/engine`)
+- Last calculation time displayed in milliseconds
+- Native: resizable window (starts maximised); tile-based parallel computation via a reactor thread pool (`core/engine`); worker and compute-proc counts default to `hardware_concurrency()`
 - WASM: dual-binary with runtime detection — multi-threaded CoreEngine pipeline when SharedArrayBuffer is available (COOP+COEP), single-threaded fallback otherwise (e.g. GitHub Pages)
 - WASM UI shows the active mode: **Multi-thread** (green) or **Single-thread / fallback** (orange)
 
@@ -88,6 +88,7 @@ Pushes to `main` deploy automatically to GitHub Pages via `.github/workflows/pag
 julia_set_simulator/
 ├── MODULE.bazel              # Bzlmod deps: rules_cc, emsdk, googletest, imgui
 ├── .bazelrc                  # Global Bazel flags
+├── .bazelignore              # Excludes .claude from Bazel workspace tracking
 ├── install.sh                # Host environment setup (apt packages + Bazelisk)
 ├── .github/workflows/
 │   └── pages.yml             # CI: test → build WASM dist → deploy to Pages
@@ -98,7 +99,7 @@ julia_set_simulator/
 ├── common/                   # Tile-based Julia pipeline (native + WASM MT)
 │   ├── compute/              #   ComputeProcObj  — per-tile Julia iteration
 │   ├── assembler/            #   FrameAssemblerProcObj — collects tiles → frame
-│   ├── controller/           #   FrameControllerProcObj — frame loop + FPS throttle
+│   ├── controller/           #   FrameControllerProcObj — frame loop + throttle
 │   └── README.md
 │
 ├── app/                      # Application layer
@@ -127,13 +128,13 @@ The three targets (native, WASM ST, WASM MT) share the same Julia iteration math
 ```
 main thread (ImGui render loop)
     │
-    └── App ──► CoreEngine (N worker threads)
-                    ├── ComputeProcObj ×M   ← compute tiles in parallel
+    └── App ──► CoreEngine (hardware_concurrency() worker threads)
+                    ├── ComputeProcObj ×(hardware_concurrency−1)  ← compute tiles
                     ├── FrameAssemblerProcObj ← collect tiles → frame
                     └── FrameControllerProcObj ← pace frame rate, dispatch next frame
 ```
 
-Tiles are distributed across *M* compute procs by the controller (round-robin). The assembled frame is double-buffered so the ImGui thread can read the latest frame lock-free.
+Tiles are distributed across *M* compute procs by the controller (round-robin). The assembled frame is double-buffered so the ImGui thread can read the latest frame lock-free. Cache info (center, zoom) is updated only after the assembler confirms the full frame is ready, keeping the displayed UV sub-rectangle always in sync with the pixels in the texture.
 
 ### WASM — dual-binary with runtime detection
 
@@ -160,8 +161,8 @@ browser event loop (requestAnimationFrame)
             ├── glTexSubImage2D()       ← upload latest frame to GPU
             └── ImGui                  ← handle events + draw UI
 Web Workers (via -sPTHREAD):
-    └── CoreEngine worker pool
-            ├── ComputeProcObj ×3   ← compute tiles in parallel
+    └── CoreEngine worker pool (hardware_concurrency() threads)
+            ├── ComputeProcObj ×(hardware_concurrency−1)  ← compute tiles
             ├── FrameAssemblerProcObj ← collect tiles → assembled frame
             └── FrameControllerProcObj ← pace frame rate, dispatch next
 ```

@@ -36,7 +36,7 @@ One *frame* equals one Julia set image at the current parameters.  The controlle
 |---|---|---|---|
 | `TileWorkMsg` | controller | compute | tile bounds, image size, Julia *c*, zoom, center, max\_iter |
 | `TileResultMsg` | compute | assembler | tile bounds + `pixels[]` (RGBA, row-major) |
-| `FrameDoneMsg` | assembler | controller | frame\_id, dispatch\_time (for FPS measurement) |
+| `FrameDoneMsg` | assembler | controller | frame\_id, dispatch\_time (for latency measurement) |
 
 All messages carry `dispatch_time` (a `std::chrono::steady_clock::time_point` set when the controller begins a frame).  The assembler echoes it into `FrameDoneMsg` so the controller can measure end-to-end frame latency.
 
@@ -63,7 +63,7 @@ The escape count is converted to a colour using a Bernstein polynomial palette. 
 
 ## FrameAssemblerProcObj (`common/assembler/`)
 
-Maintains two framebuffers (back and front, each `img_width × img_height` pixels).
+Maintains two framebuffers (back and front, each `cache_width × cache_height` pixels, where cache dimensions are `img_width × cache_margin`).
 
 On each `TileResultMsg`:
 1. Copies tile pixels into the correct rows of the **back buffer**.
@@ -81,21 +81,47 @@ Manages the frame loop:
 ```
 start()
   └─► dispatch_frame()
-            │  posts TileWorkMsg for every tile (round-robin across compute procs)
+            │  stores pending center/zoom, posts TileWorkMsg for every tile
+            │  (round-robin across compute procs)
             │
   ◄── FrameDoneMsg arrives in process_msg()
-            ├─ update rolling FPS average (30-frame window)
+            ├─ update rolling average of last frame time (30-frame window)
+            ├─ promote pending center/zoom to cache atomics (now in sync with pixels)
             ├─ throttle sleep (if frame was faster than target_fps)
-            └─ dispatch_frame()    ← unless paused
+            └─ dispatch_frame() or go idle
 ```
+
+### Cache and idle mechanism
+
+The controller maintains an oversized cache (1.5× per dimension by default). After a frame completes, it checks whether the current viewport is still within the cached region:
+
+- **Cache hit** (view within bounds, zoom within margin): mark idle, skip recompute.
+- **Cache miss** (view out of bounds or zoomed in past the margin): dispatch a new frame centred on the current view.
+
+When a UI setter (`set_zoom`, `set_center`, etc.) changes a parameter while the controller is idle, it calls `wake_if_idle()` to re-enter `dispatch_frame()`.
 
 ### Thread-safe setters
 
-The controller exposes setters (`set_julia_c`, `set_zoom`, `set_center`, `set_max_iter`, `set_target_fps`) that store values in atomics.  Each `dispatch_frame()` call reads those atomics, so parameter changes take effect on the very next frame without locking.
+The controller exposes atomic setters callable from the UI thread:
 
-### Pause / resume
+| Setter | Behaviour |
+|---|---|
+| `set_julia_c(r, i)` | stores atomics, calls `wake_if_idle()` |
+| `set_zoom(z)` | stores atomic, calls `wake_if_idle()` |
+| `set_center(cx, cy)` | stores atomics, calls `wake_if_idle()` |
+| `set_view(zoom, cx, cy)` | stores all three atomics **then** calls `wake_if_idle()` once — ensures `dispatch_frame()` reads a consistent (zoom, center) snapshot |
+| `set_max_iter(n)` | stores atomic, calls `wake_if_idle()` |
+| `set_target_fps(fps)` | stores atomic (no wake needed — affects throttle only) |
 
-`pause()` sets an atomic flag; the next `FrameDoneMsg` handler skips `dispatch_frame()`.  `resume()` clears the flag and calls `dispatch_frame()` directly from the calling (UI) thread to re-enter the pipeline without waiting for another `FrameDoneMsg`.
+`set_view()` is the preferred path for simultaneous zoom+center updates (e.g. wheel zoom toward cursor) to avoid dispatching a frame with the new zoom but the old center.
+
+### Cache info synchronisation
+
+`get_cache_info()` returns `(cx, cy, zoom, width, height, valid)` describing what is **currently in the texture**. These atomics are updated only inside `process_msg()` after `FrameDoneMsg` — i.e. after the assembler has swapped the new pixels into the front buffer — never at dispatch time. This keeps the UV sub-rectangle computed by the display layer always consistent with the pixels it is applied to.
+
+### Pause / resume (internal API)
+
+`pause()` sets an atomic flag; the next `FrameDoneMsg` handler skips `dispatch_frame()`.  `resume()` clears the flag and calls `dispatch_frame(force=true)` directly from the calling thread to re-enter the pipeline immediately.  These methods are not currently exposed in any UI.
 
 ---
 
